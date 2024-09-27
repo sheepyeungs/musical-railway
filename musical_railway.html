@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Musical Railway</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        #container {
+            text-align: center;
+        }
+        .simulation {
+            width: 600px;
+            height: 600px;
+            background-color: #fff;
+            position: relative;
+            margin-bottom: 20px;
+        }
+        .vehicle {
+            width: 20px;
+            height: 20px;
+            background-color: red;
+            position: absolute;
+            border-radius: 50%;
+            z-index: 3;
+        }
+        .note {
+            position: absolute;
+            font-size: 18px;
+            color: blue;
+            font-weight: bold;
+            z-index: 2;
+        }
+        .railway {
+            position: absolute;
+            width: 500px;
+            height: 500px;
+            border: 10px solid #333;
+            border-radius: 50%;
+            z-index: 1;
+        }
+        #clockHand {
+            position: absolute;
+            width: 0;
+            height: 0;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-bottom: 240px solid teal;
+            transform-origin: center bottom;
+            z-index: 4;
+            left: 290px;
+            top: 60px;
+        }
+        button {
+            font-size: 18px;
+            padding: 10px 20px;
+            cursor: pointer;
+            margin: 0 10px;
+        }
+        .slider {
+            width: 200px;
+            margin: 10px;
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 10px;
+        }
+        .slider-label {
+            margin: 0 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>Musical Railway</h1>
+        <div id="simulation" class="simulation">
+            <canvas id="grid"></canvas>
+            <div id="railway1" class="railway"></div>
+            <div id="railway2" class="railway"></div>
+            <div id="vehicle1" class="vehicle"></div>
+            <div id="vehicle2" class="vehicle"></div>
+            <div id="clockHand"></div>
+        </div>
+        <button id="startBtn">Start</button>
+        <button id="pauseResumeBtn">Pause</button>
+        <button id="resetBtn">Reset</button>
+        <div class="slider-container">
+            <span class="slider-label">Volume:</span>
+            <input type="range" id="volumeControl" class="slider" min="0" max="1" step="0.1" value="0.5">
+        </div>
+        <div class="slider-container">
+            <span class="slider-label">Speed:</span>
+            <input type="range" id="speedControl" class="slider" min="0.5" max="2" step="0.1" value="1">
+        </div>
+    </div>
+
+    <script>
+        const notes = [
+            'G4', 'G4', 'A4', 'G4', 'C5', 'B4',
+            'G4', 'G4', 'A4', 'G4', 'D5', 'C5',
+            'G4', 'G4', 'G5', 'E5', 'C5', 'B4', 'A4',
+            'F4', 'F4', 'E5', 'C5', 'D5', 'C5'
+        ];
+        const durations = [
+            1, 1, 2, 2, 2, 4,
+            1, 1, 2, 2, 2, 4,
+            1, 1, 2, 2, 2, 2, 4,
+            1, 1, 2, 2, 2, 4
+        ];
+        const simulation = document.getElementById('simulation');
+        const vehicle1 = document.getElementById('vehicle1');
+        const vehicle2 = document.getElementById('vehicle2');
+        const railway1 = document.getElementById('railway1');
+        const railway2 = document.getElementById('railway2');
+        const startBtn = document.getElementById('startBtn');
+        const pauseResumeBtn = document.getElementById('pauseResumeBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const volumeControl = document.getElementById('volumeControl');
+        const speedControl = document.getElementById('speedControl');
+        const grid = document.getElementById('grid');
+        const clockHand = document.getElementById('clockHand');
+        const ctx = grid.getContext('2d');
+        let currentNote = 0;
+        let isPlaying = false;
+        let isPaused = false;
+        let volume = 0.5;
+        let speed = 1;
+        let currentCanvas = 1;
+        let animationId;
+        let lastTimestamp = 0;
+        let elapsedTime = 0;
+        let audioContext;
+        let noteQueue = [];
+
+        function createNotes() {
+            const radius = 240;
+            const centerX = 300;
+            const centerY = 300;
+            notes.forEach((note, index) => {
+                const angle = (index / notes.length) * 2 * Math.PI - Math.PI / 2;
+                const x = centerX + radius * Math.cos(angle);
+                const y = centerY + radius * Math.sin(angle);
+
+                const noteElement = document.createElement('div');
+                noteElement.className = 'note';
+                noteElement.textContent = note;
+                noteElement.style.left = `${x}px`;
+                noteElement.style.top = `${y}px`;
+                simulation.appendChild(noteElement);
+            });
+
+            railway1.style.left = '50px';
+            railway1.style.top = '50px';
+            railway2.style.left = '40px';
+            railway2.style.top = '40px';
+            railway2.style.width = '520px';
+            railway2.style.height = '520px';
+        }
+
+        function drawGrid() {
+            ctx.canvas.width = 600;
+            ctx.canvas.height = 600;
+            ctx.strokeStyle = '#ddd';
+            ctx.lineWidth = 1;
+
+            for (let i = 0; i <= 600; i += 50) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, 600);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(600, i);
+                ctx.stroke();
+            }
+        }
+
+        function scheduleNote(time, frequency, duration) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(frequency, time);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            gainNode.gain.setValueAtTime(volume, time);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, time + duration - 0.1);
+
+            oscillator.start(time);
+            oscillator.stop(time + duration);
+        }
+
+        function getNoteFrequency(note) {
+            const noteFrequencies = {
+                'C4': 261.63, 'D4': 293.66, 'E4': 329.63, 'F4': 349.23,
+                'G4': 392.00, 'A4': 440.00, 'B4': 493.88,
+                'C5': 523.25, 'D5': 587.33, 'E5': 659.25, 'F5': 698.46,
+                'G5': 783.99, 'A5': 880.00, 'B5': 987.77
+            };
+            return noteFrequencies[note] || 440;
+        }
+
+        function updateSimulation(timestamp) {
+            if (!lastTimestamp) lastTimestamp = timestamp;
+            const deltaTime = timestamp - lastTimestamp;
+            lastTimestamp = timestamp;
+
+            if (!isPaused) {
+                elapsedTime += deltaTime * speed * (currentCanvas === 2 ? 2 : 1);
+
+                const totalDuration = durations.reduce((sum, duration) => sum + duration, 0) * 500;
+                const progress = (elapsedTime % totalDuration) / totalDuration;
+                const angle = progress * 2 * Math.PI - Math.PI / 2;
+                const radius = currentCanvas === 1 ? 240 : 250;
+                const centerX = 300;
+                const centerY = 300;
+                const x = centerX + radius * Math.cos(angle);
+                const y = centerY + radius * Math.sin(angle);
+
+                const vehicle = currentCanvas === 1 ? vehicle1 : vehicle2;
+                vehicle.style.left = `${x}px`;
+                vehicle.style.top = `${y}px`;
+
+                clockHand.style.transform = `rotate(${angle + Math.PI/2}rad)`;
+
+                let cumulativeTime = 0;
+                for (let i = 0; i < durations.length; i++) {
+                    cumulativeTime += durations[i] * 500;
+                    if (elapsedTime % totalDuration < cumulativeTime) {
+                        if (currentNote !== i) {
+                            currentNote = i;
+                            const noteTime = audioContext.currentTime + 0.1;
+                            const noteDuration = durations[i] * 0.5 / speed;
+                            scheduleNote(noteTime, getNoteFrequency(notes[i]), noteDuration);
+                        }
+                        break;
+                    }
+                }
+
+                const noteElements = simulation.querySelectorAll('.note');
+                noteElements.forEach((el, index) => {
+                    if (index <= currentNote) {
+                        if (currentCanvas === 1) {
+                            el.style.color = 'red';
+                        } else {
+                            el.style.color = 'green';
+                        }
+                    }
+                });
+
+                if (elapsedTime >= totalDuration && currentCanvas === 1) {
+                    currentCanvas = 2;
+                    elapsedTime = 0;
+                }
+
+                // Stop playback after finishing the second circle
+                if (elapsedTime >= totalDuration && currentCanvas === 2) {
+                    stopPlayback();
+                    return;
+                }
+            }
+
+            animationId = requestAnimationFrame(updateSimulation);
+        }
+
+        function stopPlayback() {
+            isPlaying = false;
+            isPaused = false;
+            startBtn.disabled = false;
+            pauseResumeBtn.textContent = 'Pause';
+            cancelAnimationFrame(animationId);
+            if (audioContext) {
+                audioContext.close();
+            }
+        }
+
+        function resetClockHand() {
+            const angle = (-Math.PI / 2);
+            clockHand.style.transform = `rotate(${angle + Math.PI/2}rad)`;
+        }
+
+        startBtn.addEventListener('click', () => {
+            if (!isPlaying) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                isPlaying = true;
+                isPaused = false;
+                currentNote = 0;
+                currentCanvas = 1;
+                vehicle1.style.left = '300px';
+                vehicle1.style.top = '60px';
+                vehicle2.style.left = '300px';
+                vehicle2.style.top = '50px';
+                startBtn.disabled = true;
+                pauseResumeBtn.textContent = 'Pause';
+                document.querySelectorAll('.note').forEach(note => note.style.color = 'blue');
+                resetClockHand();
+                elapsedTime = 0;
+                lastTimestamp = 0;
+                animationId = requestAnimationFrame(updateSimulation);
+            }
+        });
+
+        pauseResumeBtn.addEventListener('click', () => {
+            if (isPlaying) {
+                isPaused = !isPaused;
+                pauseResumeBtn.textContent = isPaused ? 'Resume' : 'Pause';
+                if (!isPaused) {
+                    lastTimestamp = 0;
+                    animationId = requestAnimationFrame(updateSimulation);
+                }
+            }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            stopPlayback();
+            currentNote = 0;
+            currentCanvas = 1;
+            vehicle1.style.left = '300px';
+            vehicle1.style.top = '60px';
+            vehicle2.style.left = '300px';
+            vehicle2.style.top = '50px';
+            document.querySelectorAll('.note').forEach(note => note.style.color = 'blue');
+            resetClockHand();
+            elapsedTime = 0;
+            lastTimestamp = 0;
+        });
+
+        volumeControl.addEventListener('input', (e) => {
+            volume = parseFloat(e.target.value);
+        });
+
+        speedControl.addEventListener('input', (e) => {
+            speed = parseFloat(e.target.value);
+        });
+
+        createNotes();
+        drawGrid();
+        resetClockHand();
+    </script>
+</body>
+</html>
